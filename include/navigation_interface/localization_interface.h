@@ -136,13 +136,15 @@ class LocalizationInterface {
       pub_path.publish(path_msg);
     }
 
-    // Republish TF
+    // NOTE(gogojjh): the changed order publish due to the design of ANYmal
+    // Republish TF: base_frame_id -> world_frame_id
+    Eigen::Matrix4d T_base_world = T_world_base.inverse();
     static tf::TransformBroadcaster br;
     br.sendTransform(
-      tf::StampedTransform(convertEigenMatrixToTransform(T_world_base), 
+      tf::StampedTransform(convertEigenMatrixToTransform(T_base_world), 
       msg->header.stamp,
-      world_frame_id, 
-      base_frame_id));
+      base_frame_id,
+      world_frame_id));
   }
 
   void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_msg) {
