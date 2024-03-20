@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navigation_interface</name>
+  <version>0.0.0</version>
+  <description>Tools for the RPL-RoboHike Project</description>
+
+  <maintainer email="jiaojh1994@gmail.com">Jianhao Jiao</maintainer>
+  <author email="jiaojh1994@gmail.com">Jianhao Jiao</author>
+
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>catkin_simple</buildtool_depend>
+
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>pcl_ros</depend>
+
+  <!-- <depend>eigen_catkin</depend>
+  <depend>glog_catkin</depend>
+  <depend>gflags_catkin</depend>
+  <depend>yaml_cpp_catkin</depend> -->
+
+</package>

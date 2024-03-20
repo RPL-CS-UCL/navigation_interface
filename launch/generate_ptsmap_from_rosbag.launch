@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="ISO-8859-15"?>
+<launch>
+  <arg name="path_to_rosbag" default="/tmp/rosbag.bag" />
+  <arg name="pointcloud_topic_name" default="/velodyne_points" />
+  <arg name="odometry_topic_name" default="/odometry" />
+  <arg name="world_frame_id" default="world" />
+  <arg name="path_to_ptsmap" default="/tmp/map.pcd" />
+  <arg name="resolution_ptsmap" default="0.05" />
+  <arg name="blind" default="1.0" />
+
+  <node name="generate_ptsmap_from_rosbag" pkg="robohike_tools" type="generate_ptsmap_from_rosbag"
+    clear_params="true" output="screen" required="true">
+    <param name="path_to_rosbag" value="$(arg path_to_rosbag)" />
+    <param name="pointcloud_topic_name" value="$(arg pointcloud_topic_name)" />
+    <param name="odometry_topic_name" value="$(arg odometry_topic_name)" />
+    <param name="world_frame_id" value="$(arg world_frame_id)" />
+    <param name="path_to_ptsmap" value="$(arg path_to_ptsmap)" />
+    <param name="resolution_ptsmap" value="$(arg resolution_ptsmap)" />
+    <param name="blind" value="$(arg blind)" />
+  </node>
+
+</launch>
