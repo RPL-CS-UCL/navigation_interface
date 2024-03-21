@@ -20,8 +20,7 @@ typedef pcl::PointXYZI PointType;
 
 // #define DEBUG
 
-Eigen::Matrix4d convertTransformToEigenMatrix(
-    const tf::StampedTransform &transform) {
+Eigen::Matrix4d convertTransformToEigenMatrix(const tf::StampedTransform &transform) {
   tf::Quaternion q = transform.getRotation();
   Eigen::Quaterniond eigen_quat(q.w(), q.x(), q.y(), q.z());
 
@@ -56,7 +55,7 @@ class LocalizationInterface {
     loc_world_frame_id = get_ros_param(nhp,  "loc_world_frame_id", std::string("fastlio_world"));
     loc_pointcloud_frame_id = get_ros_param(nhp, "loc_pointcloud_frame_id", std::string("fastlio_body"));
 
-    world_frame_id = get_ros_param(nhp, "world_frame_id",std::string("map"));
+    world_frame_id = get_ros_param(nhp, "world_frame_id",std::string("map")); // the world frame of the base
     pointcloud_frame_id = get_ros_param(nhp, "pointcloud_frame_id", std::string("imu_link"));
     base_frame_id = get_ros_param(nhp, "base_frame_id", std::string("base"));
     near_point_filter_radius = get_ros_param(nhp, "near_point_filter_radius", 0.7);
@@ -64,8 +63,6 @@ class LocalizationInterface {
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
 
-    // NOTE(googjjh): transform from the gravity frame to the world frame of the localization
-    T_gravity_transform.block<3, 3>(0, 0) = Eigen::Quaterniond(0.0, 0.0, 1.0, 0.0).toRotationMatrix();
 #ifdef DEBUG
     std::cout << "loc_world_frame_id: " << loc_world_frame_id << std::endl;
     std::cout << "loc_pointcloud_frame_id: " << loc_pointcloud_frame_id << std::endl;
@@ -100,12 +97,12 @@ class LocalizationInterface {
                              msg->pose.pose.position.y,
                              msg->pose.pose.position.z);
     T_world_pointcloud.block<3, 1>(0, 3) = position;
-    Eigen::Quaterniond quat(
-        msg->pose.pose.orientation.w, msg->pose.pose.orientation.x,
-        msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
+    Eigen::Quaterniond quat(msg->pose.pose.orientation.w, // NOLINT
+                            msg->pose.pose.orientation.x, // NOLINT
+                            msg->pose.pose.orientation.y, // NOLINT
+                            msg->pose.pose.orientation.z);
     T_world_pointcloud.block<3, 3>(0, 0) = quat.toRotationMatrix();
-    Eigen::Matrix4d T_world_base =
-        T_gravity_transform * T_world_pointcloud * T_base_pointcloud.inverse();
+    Eigen::Matrix4d T_world_base = T_base_pointcloud * T_world_pointcloud * T_base_pointcloud.inverse();
 
     nav_msgs::Odometry transformed_odom;
     transformed_odom.header.stamp = msg->header.stamp;
@@ -136,8 +133,7 @@ class LocalizationInterface {
       pub_path.publish(path_msg);
     }
 
-    // NOTE(gogojjh): the changed order publish due to the design of ANYmal
-    // Republish TF: base_frame_id -> world_frame_id
+    // Republish TF: base_frame_id -> world_frame_id due to the design of ANYmal
     Eigen::Matrix4d T_base_world = T_world_base.inverse();
     static tf::TransformBroadcaster br;
     br.sendTransform(
@@ -179,9 +175,6 @@ class LocalizationInterface {
                                    transform_world_pointcloud);
       T_world_pointcloud =
           convertTransformToEigenMatrix(transform_world_pointcloud);
-#ifdef DEBUG
-      std::cout << "T_world_pointcloud:\n" << T_world_pointcloud << std::endl;
-#endif
     } catch (tf::TransformException &ex) {
         // ROS_WARN("%s", ex.what());
         return;
@@ -189,11 +182,10 @@ class LocalizationInterface {
     pcl::PointCloud<PointType>::Ptr cloud(new pcl::PointCloud<PointType>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
 
-
     // Transform the pointcloud and filter out points that are too close
     pcl::PointCloud<PointType>::Ptr transformed_cloud(new pcl::PointCloud<PointType>());
     transformed_cloud->reserve(cloud->size());
-    Eigen::Matrix4d T_world_base = T_gravity_transform * T_world_pointcloud * T_base_pointcloud.inverse();
+    Eigen::Matrix4d T_world_base = T_base_pointcloud * T_world_pointcloud * T_base_pointcloud.inverse();
     for (const auto &p : cloud->points) {
       Eigen::Vector3d point(p.x, p.y, p.z);
       Eigen::Vector3d point_base = T_base_pointcloud.block<3, 3>(0, 0) * point +
@@ -209,11 +201,11 @@ class LocalizationInterface {
         transformed_cloud->push_back(p_world);
       }
     }
-    sensor_msgs::PointCloud2 transformed_cloud_msg;
-    pcl::toROSMsg(*transformed_cloud, transformed_cloud_msg);
-    transformed_cloud_msg.header.stamp = cloud_msg->header.stamp;
-    transformed_cloud_msg.header.frame_id = world_frame_id;
-    pub_registered_scan.publish(transformed_cloud_msg);
+    sensor_msgs::PointCloud2 pc_msg;
+    pcl::toROSMsg(*transformed_cloud, pc_msg);
+    pc_msg.header.stamp = cloud_msg->header.stamp;
+    pc_msg.header.frame_id = world_frame_id;
+    pub_registered_scan.publish(pc_msg);
   }
 
  private:
@@ -238,5 +230,4 @@ class LocalizationInterface {
   bool init_system = false;
   int odom_cnt = 0;
   Eigen::Matrix4d T_base_pointcloud = Eigen::Matrix4d::Identity();
-  Eigen::Matrix4d T_gravity_transform = Eigen::Matrix4d::Identity();
 };
