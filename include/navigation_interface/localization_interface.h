@@ -1,3 +1,6 @@
+#include <message_filters/subscriber.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <message_filters/time_synchronizer.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <pcl/point_cloud.h>
@@ -15,12 +18,14 @@
 #include "navigation_interface/ros_params_helper.h"
 
 using namespace navigation_interface;
+using namespace message_filters;
 
 typedef pcl::PointXYZI PointType;
 
 // #define DEBUG
 
-Eigen::Matrix4d convertTransformToEigenMatrix(const tf::StampedTransform &transform) {
+Eigen::Matrix4d convertTransformToEigenMatrix(
+    const tf::StampedTransform &transform) {
   tf::Quaternion q = transform.getRotation();
   Eigen::Quaterniond eigen_quat(q.w(), q.x(), q.y(), q.z());
 
@@ -50,15 +55,19 @@ tf::Transform convertEigenMatrixToTransform(const Eigen::Matrix4d &matrix) {
 
 class LocalizationInterface {
  public:
-  LocalizationInterface(ros::NodeHandle &nh, ros::NodeHandle &nhp) {
+  LocalizationInterface(ros::NodeHandle &nh, ros::NodeHandle &nhp)
+      : sub_odometry(nh, "/Odometry", 10),
+        sub_pointcloud(nh, "/cloud_registered_body", 10),
+        sync(SyncPolicy(10), sub_odometry, sub_pointcloud) {
     // clang-format off
-    loc_world_frame_id = get_ros_param(nhp,  "loc_world_frame_id", std::string("fastlio_world"));
+    loc_world_frame_id = get_ros_param(nhp, "loc_world_frame_id", std::string("fastlio_world"));
     loc_pointcloud_frame_id = get_ros_param(nhp, "loc_pointcloud_frame_id", std::string("fastlio_body"));
 
-    world_frame_id = get_ros_param(nhp, "world_frame_id",std::string("map")); // the world frame of the base
+    world_frame_id = get_ros_param(nhp, "world_frame_id", std::string("map"));  // the world frame of the base
     pointcloud_frame_id = get_ros_param(nhp, "pointcloud_frame_id", std::string("imu_link"));
     base_frame_id = get_ros_param(nhp, "base_frame_id", std::string("base"));
-    near_point_filter_radius = get_ros_param(nhp, "near_point_filter_radius", 0.7);
+    near_point_filter_length = get_ros_param(nhp, "near_point_filter_length", 0.9);
+    near_point_filter_width = get_ros_param(nhp, "near_point_filter_width", 0.6);
 
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
@@ -69,49 +78,72 @@ class LocalizationInterface {
     std::cout << "world_frame_id: " << world_frame_id << std::endl;
     std::cout << "pointcloud_frame_id: " << pointcloud_frame_id << std::endl;
     std::cout << "base_frame_id: " << base_frame_id << std::endl;
-    std::cout << "near_point_filter_radius: " << near_point_filter_radius << std::endl;
+    std::cout << "near_point_filter_length: " << near_point_filter_length << std::endl;
+    std::cout << "near_point_filter_width: " << near_point_filter_width << std::endl;
 #endif
-    // clang-format on
-
-    // clang-format off
-    sub_odometry = nh.subscribe("/Odometry", 10, &LocalizationInterface::odomCallback, this);
-    sub_pointcloud = nh.subscribe("/cloud_registered_body", 10, &LocalizationInterface::cloudCallback, this);
 
     pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/state_estimation", 1);
     pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/registered_scan", 1);
     pub_path = nh.advertise<nav_msgs::Path>("/state_estimation_path", 1);
 
     tf_listener.reset(new tf::TransformListener);
+
+    sync.registerCallback(boost::bind(&LocalizationInterface::callback, this, _1, _2));
     // clang-format on
   }
 
-  void odomCallback(const nav_msgs::Odometry::ConstPtr &msg) {
+  void callback(const nav_msgs::Odometry::ConstPtr &odom_msg,
+                const sensor_msgs::PointCloud2::ConstPtr &cloud_msg) {
 #ifdef DEBUG
-    std::cout << "odomCallback" << std::endl;
+    std::cout << "Synchronized callback triggered" << std::endl;
 #endif
-    if (!init_system) return;
+    if (!init_system) {
+      try {
+        tf::StampedTransform transform_base_lidar;
+        tf_listener->lookupTransform(base_frame_id, pointcloud_frame_id,
+                                     ros::Time(0), transform_base_lidar);
+        T_base_pointcloud = convertTransformToEigenMatrix(transform_base_lidar);
+        init_system = true;
+#ifdef DEBUG
+        std::cout << "Initial system initialized" << std::endl;
+        std::cout << "T_base_pointcloud:\n" << T_base_pointcloud << std::endl;
+#endif
+      } catch (tf::TransformException &ex) {
+        return;
+      }
+    }
 
-    // Republish Odometry
-    Eigen::Matrix4d T_world_pointcloud = Eigen::Matrix4d::Identity();
+    if (init_system) {
+      Eigen::Matrix4d T_world_base_base = processOdometry(odom_msg);
+      processPointCloud(cloud_msg, T_world_base_base);
+    }
+  }
+
+ private:
+  Eigen::Matrix4d processOdometry(const nav_msgs::Odometry::ConstPtr &msg) {
+#ifdef DEBUG
+    std::cout << "Processing odometry" << std::endl;
+#endif
+    Eigen::Matrix4d T_world_pc_pc = Eigen::Matrix4d::Identity();
     Eigen::Vector3d position(msg->pose.pose.position.x,
                              msg->pose.pose.position.y,
                              msg->pose.pose.position.z);
-    T_world_pointcloud.block<3, 1>(0, 3) = position;
-    Eigen::Quaterniond quat(msg->pose.pose.orientation.w, // NOLINT
-                            msg->pose.pose.orientation.x, // NOLINT
-                            msg->pose.pose.orientation.y, // NOLINT
-                            msg->pose.pose.orientation.z);
-    T_world_pointcloud.block<3, 3>(0, 0) = quat.toRotationMatrix();
-    Eigen::Matrix4d T_world_base = T_base_pointcloud * T_world_pointcloud * T_base_pointcloud.inverse();
+    T_world_pc_pc.block<3, 1>(0, 3) = position;
+    Eigen::Quaterniond quat(
+        msg->pose.pose.orientation.w, msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
+    T_world_pc_pc.block<3, 3>(0, 0) = quat.toRotationMatrix();
+    Eigen::Matrix4d T_world_base_base =
+        T_base_pointcloud * T_world_pc_pc * T_base_pointcloud.inverse();
 
     nav_msgs::Odometry transformed_odom;
     transformed_odom.header.stamp = msg->header.stamp;
     transformed_odom.header.frame_id = world_frame_id;
     transformed_odom.child_frame_id = base_frame_id;
-    transformed_odom.pose.pose.position.x = T_world_base(0, 3);
-    transformed_odom.pose.pose.position.y = T_world_base(1, 3);
-    transformed_odom.pose.pose.position.z = T_world_base(2, 3);
-    Eigen::Quaterniond transformed_quat(T_world_base.block<3, 3>(0, 0));
+    transformed_odom.pose.pose.position.x = T_world_base_base(0, 3);
+    transformed_odom.pose.pose.position.y = T_world_base_base(1, 3);
+    transformed_odom.pose.pose.position.z = T_world_base_base(2, 3);
+    Eigen::Quaterniond transformed_quat(T_world_base_base.block<3, 3>(0, 0));
     transformed_odom.pose.pose.orientation.w = transformed_quat.w();
     transformed_odom.pose.pose.orientation.x = transformed_quat.x();
     transformed_odom.pose.pose.orientation.y = transformed_quat.y();
@@ -119,7 +151,6 @@ class LocalizationInterface {
     pub_state_estimation.publish(transformed_odom);
     odom_cnt++;
 
-    // Republish path
     if (odom_cnt % 10 == 0) {
       odom_cnt = 0;
       geometry_msgs::PoseStamped pose_stamped;
@@ -133,71 +164,44 @@ class LocalizationInterface {
       pub_path.publish(path_msg);
     }
 
-    // Republish TF: base_frame_id -> world_frame_id due to the design of ANYmal
-    Eigen::Matrix4d T_base_world = T_world_base.inverse();
+    Eigen::Matrix4d T_base_world_base = T_world_base_base.inverse();
     static tf::TransformBroadcaster br;
     br.sendTransform(
-      tf::StampedTransform(convertEigenMatrixToTransform(T_base_world), 
-      msg->header.stamp,
-      base_frame_id,
-      world_frame_id));
+        tf::StampedTransform(convertEigenMatrixToTransform(T_base_world_base),
+                             msg->header.stamp, base_frame_id, world_frame_id));
+    return T_world_base_base;
   }
 
-  void cloudCallback(const sensor_msgs::PointCloud2::ConstPtr &cloud_msg) {
+  void processPointCloud(const sensor_msgs::PointCloud2::ConstPtr &cloud_msg,
+                         const Eigen::Matrix4d &T_world_base_base) {
 #ifdef DEBUG
     std::cout << "Received pointcloud with " << cloud_msg->width << " points"
               << std::endl;
 #endif
-    // Load extrinsics
-    if (!init_system) {
-      try {
-        tf::StampedTransform transform_base_lidar;
-        tf_listener->lookupTransform(base_frame_id, pointcloud_frame_id,
-                                     ros::Time(0), transform_base_lidar);
-        T_base_pointcloud = convertTransformToEigenMatrix(transform_base_lidar);
-        init_system = true;
-#ifdef DEBUG
-        std::cout << "Initial system initialized" << std::endl;
-        std::cout << "T_base_pointcloud:\n" << T_base_pointcloud << std::endl;
-#endif
-      } catch (tf::TransformException &ex) {
-        // ROS_WARN("%s", ex.what());
-        return;
-      }
-    }
-
-    // Load localization poses
-    tf::StampedTransform transform_world_pointcloud;
-    Eigen::Matrix4d T_world_pointcloud = Eigen::Matrix4d::Identity();
-    try {
-      tf_listener->lookupTransform(loc_world_frame_id, loc_pointcloud_frame_id,
-                                   cloud_msg->header.stamp,
-                                   transform_world_pointcloud);
-      T_world_pointcloud =
-          convertTransformToEigenMatrix(transform_world_pointcloud);
-    } catch (tf::TransformException &ex) {
-        // ROS_WARN("%s", ex.what());
-        return;
-    }
     pcl::PointCloud<PointType>::Ptr cloud(new pcl::PointCloud<PointType>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
 
-    // Transform the pointcloud and filter out points that are too close
-    pcl::PointCloud<PointType>::Ptr transformed_cloud(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr transformed_cloud(
+        new pcl::PointCloud<PointType>());
     transformed_cloud->reserve(cloud->size());
-    Eigen::Matrix4d T_world_base = T_base_pointcloud * T_world_pointcloud * T_base_pointcloud.inverse();
+
     for (const auto &p : cloud->points) {
       Eigen::Vector3d point(p.x, p.y, p.z);
+      // conver the point in the lidar frame to the base frame
       Eigen::Vector3d point_base = T_base_pointcloud.block<3, 3>(0, 0) * point +
                                    T_base_pointcloud.block<3, 1>(0, 3);
-      if (point_base.norm() > near_point_filter_radius) {
-        Eigen::Vector3d point_world =
-            T_world_base.block<3, 3>(0, 0) * point_base +
-            T_world_base.block<3, 1>(0, 3);
+
+      if ((abs(point_base.x()) > near_point_filter_length) &&
+          (abs(point_base.y()) > near_point_filter_width) &&
+          (abs(point_base.z()) > 0.5)) {
+        // conver the point in the base frame to the world base frame
+        Eigen::Vector3d point_world_base =
+            T_world_base_base.block<3, 3>(0, 0) * point_base +
+            T_world_base_base.block<3, 1>(0, 3);
         PointType p_world = p;
-        p_world.x = static_cast<float>(point_world.x());
-        p_world.y = static_cast<float>(point_world.y());
-        p_world.z = static_cast<float>(point_world.z());
+        p_world.x = static_cast<float>(point_world_base.x());
+        p_world.y = static_cast<float>(point_world_base.y());
+        p_world.z = static_cast<float>(point_world_base.z());
         transformed_cloud->push_back(p_world);
       }
     }
@@ -208,10 +212,13 @@ class LocalizationInterface {
     pub_registered_scan.publish(pc_msg);
   }
 
- private:
   // ROS
-  ros::Subscriber sub_odometry;
-  ros::Subscriber sub_pointcloud;
+  // clang-format off
+  Subscriber<nav_msgs::Odometry> sub_odometry;
+  Subscriber<sensor_msgs::PointCloud2> sub_pointcloud;
+  typedef sync_policies::ApproximateTime<nav_msgs::Odometry, sensor_msgs::PointCloud2> SyncPolicy;
+  Synchronizer<SyncPolicy> sync;
+  // clang-format on
 
   ros::Publisher pub_state_estimation;
   ros::Publisher pub_registered_scan;
@@ -224,7 +231,8 @@ class LocalizationInterface {
   // Parameters
   std::string loc_world_frame_id, loc_pointcloud_frame_id;
   std::string world_frame_id, base_frame_id, pointcloud_frame_id;
-  double near_point_filter_radius = 0.7;
+  double near_point_filter_length = 0.9;
+  double near_point_filter_width = 0.6;
 
   // Others
   bool init_system = false;
