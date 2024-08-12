@@ -245,6 +245,7 @@ class VISLocalizationInterface {
   VISLocalizationInterface(ros::NodeHandle &nh, ros::NodeHandle &nhp){
     // clang-format off
     sub_odometry = nh.subscribe("/Odometry", 10, &VISLocalizationInterface::OdomCallback, this);
+    sub_waypoint = nh.subscribe("/way_point", 10, &VISLocalizationInterface::WaypointCallback, this);
 
     loc_world_frame_id = get_ros_param(nhp, "loc_world_frame_id", std::string("vloc_map"));
     loc_sensor_frame_id = get_ros_param(nhp, "loc_sensor_frame_id", std::string("sensor"));
@@ -266,6 +267,7 @@ class VISLocalizationInterface {
 
     pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/vloc/state_estimation", 1);
     pub_path = nh.advertise<nav_msgs::Path>("/vloc/state_estimation_path", 1);
+    pub_waypoint = nh.advertise<geometry_msgs::PointStamped>("/vloc/way_point", 1);
 
     tf_listener.reset(new tf::TransformListener);
     // clang-format on
@@ -292,6 +294,14 @@ class VISLocalizationInterface {
     }
     if (init_system) {
       Eigen::Matrix4d T_world_base_base = processOdometry(odom_msg);
+    }
+  }
+
+  void WaypointCallback(const geometry_msgs::PointStamped::ConstPtr &waypoint_msg) {
+    if (init_system) {
+      geometry_msgs::PointStamped new_waypoint = *waypoint_msg;
+      new_waypoint.header.frame_id = world_frame_id;
+      pub_waypoint.publish(new_waypoint);
     }
   }
 
@@ -356,13 +366,15 @@ class VISLocalizationInterface {
   // ROS
   // clang-format off
   ros::Subscriber sub_odometry;
-  // clang-format on
+  ros::Subscriber sub_waypoint;
 
   ros::Publisher pub_state_estimation;
   ros::Publisher pub_path;
+  ros::Publisher pub_waypoint;
   nav_msgs::Path path_msg;
 
   std::unique_ptr<tf::TransformListener> tf_listener;
+  // clang-format on
 
   // Parameters
   std::string loc_world_frame_id, loc_sensor_frame_id;
