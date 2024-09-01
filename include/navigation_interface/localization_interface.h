@@ -191,19 +191,20 @@ class LocalizationInterface {
       Eigen::Vector3d point_base = T_base_pointcloud.block<3, 3>(0, 0) * point +
                                    T_base_pointcloud.block<3, 1>(0, 3);
 
-      if ((abs(point_base.x()) > near_point_filter_length) &&
-          (abs(point_base.y()) > near_point_filter_width) &&
-          (abs(point_base.z()) > 0.5)) {
-        // conver the point in the base frame to the world base frame
-        Eigen::Vector3d point_world_base =
-            T_world_base_base.block<3, 3>(0, 0) * point_base +
-            T_world_base_base.block<3, 1>(0, 3);
-        PointType p_world = p;
-        p_world.x = static_cast<float>(point_world_base.x());
-        p_world.y = static_cast<float>(point_world_base.y());
-        p_world.z = static_cast<float>(point_world_base.z());
-        transformed_cloud->push_back(p_world);
-      }
+      if ((abs(point_base.x()) < near_point_filter_length) &&
+          (abs(point_base.y()) < near_point_filter_width) &&
+          (abs(point_base.z()) < 0.5)) 
+        continue;
+        
+      // conver the point in the base frame to the world base frame
+      Eigen::Vector3d point_world_base =
+          T_world_base_base.block<3, 3>(0, 0) * point_base +
+          T_world_base_base.block<3, 1>(0, 3);
+      PointType p_world = p;
+      p_world.x = static_cast<float>(point_world_base.x());
+      p_world.y = static_cast<float>(point_world_base.y());
+      p_world.z = static_cast<float>(point_world_base.z());
+      transformed_cloud->push_back(p_world);
     }
     sensor_msgs::PointCloud2 pc_msg;
     pcl::toROSMsg(*transformed_cloud, pc_msg);
