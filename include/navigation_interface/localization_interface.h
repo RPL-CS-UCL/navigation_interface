@@ -22,7 +22,7 @@ using namespace message_filters;
 
 typedef pcl::PointXYZI PointType;
 
-#define DEBUG
+// #define DEBUG
 
 Eigen::Matrix4d convertTransformToEigenMatrix(
     const tf::StampedTransform &transform) {
@@ -235,7 +235,7 @@ class CMULocalizationInterface {
   bool init_system = false;
   Eigen::Matrix4d T_base_sensor = Eigen::Matrix4d::Identity();
   size_t odom_cnt = 0;
-  size_t point_skip = 1;
+  int point_skip = 1;
 };
 
 class VISLocalizationInterface : public CMULocalizationInterface {
@@ -251,6 +251,8 @@ class VISLocalizationInterface : public CMULocalizationInterface {
     world_frame_id = get_ros_param(nhp, "world_frame_id", std::string("map"));  // the world frame of the base
     sensor_frame_id = get_ros_param(nhp, "sensor_frame_id", std::string("imu_link"));
     base_frame_id = get_ros_param(nhp, "base_frame_id", std::string("base"));
+
+    point_skip = get_ros_param(nhp, "point_skip", int(10));
 
 #ifdef DEBUG
     std::cout << "loc_world_frame_id: " << loc_world_frame_id << std::endl;
@@ -284,7 +286,5 @@ class VISLocalizationInterface : public CMULocalizationInterface {
   // clang-format off
   ros::Subscriber sub_waypoint;
   ros::Publisher pub_waypoint;
-
-  size_t point_skip = 10;
   // clang-format on
 };
