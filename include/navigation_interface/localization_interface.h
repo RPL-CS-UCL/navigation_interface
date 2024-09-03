@@ -284,7 +284,7 @@ class VISLocalizationInterface {
       try {
         tf::StampedTransform transform_base_sensor;
         tf_listener->lookupTransform(base_frame_id, sensor_frame_id,
-                                     depth_msg->header.stamp, transform_base_sensor);
+                                     odom_msg->header.stamp, transform_base_sensor);
         T_base_sensor = convertTransformToEigenMatrix(transform_base_sensor);
         init_system = true;
       } catch (tf::TransformException &ex) {
@@ -305,6 +305,11 @@ class VISLocalizationInterface {
       if (init_system) {
         Eigen::Matrix4d T_world_base = processOdometry(odom_msg, T_base_sensor);
         processPointCloud(depth_cloud, depth_msg->header.stamp, T_base_sensor, T_world_base);
+
+        static tf::TransformBroadcaster br;
+        br.sendTransform(
+            tf::StampedTransform(convertEigenMatrixToTransform(T_base_sensor),
+                                 odom_msg->header.stamp, world_frame_id, loc_world_frame_id));
       }
     } catch (cv_bridge::Exception& e) {
       std::cout << "cv_bridge exception: " << e.what() << std::endl;
