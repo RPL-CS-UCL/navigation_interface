@@ -271,6 +271,7 @@ class VISLocalizationInterface {
     pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/state_estimation", 1);
     pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/registered_scan", 1);
     pub_path = nh.advertise<nav_msgs::Path>("/state_estimation_path", 1);
+    pub_waypoint = nh.advertise<geometry_msgs::PointStamped>("/vloc/way_point", 1);
     tf_listener.reset(new tf::TransformListener);
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
@@ -406,7 +407,7 @@ class VISLocalizationInterface {
   void WaypointCallback(const geometry_msgs::PointStamped::ConstPtr &waypoint_msg) {
     if (init_system) {
       geometry_msgs::PointStamped new_waypoint = *waypoint_msg;
-      new_waypoint.header.frame_id = world_frame_id;
+      // new_waypoint.header.frame_id = waypoint_msg.header.frame_id;
       pub_waypoint.publish(new_waypoint);
     }
   }
