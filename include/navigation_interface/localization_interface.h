@@ -266,12 +266,12 @@ class VISLocalizationInterface {
     point_skip = get_ros_param(nhp, "point_skip", 50);
     // ROS
     sync.registerCallback(boost::bind(&VISLocalizationInterface::callback, this, _1, _2, _3));
-    sub_waypoint = nh.subscribe("/way_point", 10, &VISLocalizationInterface::WaypointCallback, this);
+    sub_waypoint = nh.subscribe("/vloc/way_point", 10, &VISLocalizationInterface::WaypointCallback, this);
     
     pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/state_estimation", 1);
     pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/registered_scan", 1);
     pub_path = nh.advertise<nav_msgs::Path>("/state_estimation_path", 1);
-    pub_waypoint = nh.advertise<geometry_msgs::PointStamped>("/vloc/way_point", 1);
+    pub_waypoint = nh.advertise<geometry_msgs::PointStamped>("/way_point", 1);
     tf_listener.reset(new tf::TransformListener);
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
@@ -406,9 +406,16 @@ class VISLocalizationInterface {
 
   void WaypointCallback(const geometry_msgs::PointStamped::ConstPtr &waypoint_msg) {
     if (init_system) {
-      geometry_msgs::PointStamped new_waypoint = *waypoint_msg;
-      // new_waypoint.header.frame_id = waypoint_msg.header.frame_id;
-      pub_waypoint.publish(new_waypoint);
+      Eigen::Vector3d point(waypoint_msg->point.x, waypoint_msg->point.y, waypoint_msg->point.z);
+      Eigen::Vector3d point_world = T_base_sensor.block<3, 3>(0, 0) * point + 
+                                    T_base_sensor.block<3, 1>(0, 3);
+      geometry_msgs::PointStamped new_waypoint_msg;
+      new_waypoint_msg.header = waypoint_msg->header;
+      new_waypoint_msg.header.frame_id = world_frame_id;
+      new_waypoint_msg.point.x = point_world[0];
+      new_waypoint_msg.point.y = point_world[1];
+      new_waypoint_msg.point.z = point_world[2];
+      pub_waypoint.publish(new_waypoint_msg);
     }
   }
 
