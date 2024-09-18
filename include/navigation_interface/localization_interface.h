@@ -269,9 +269,9 @@ class VISLocalizationInterface {
     sync.registerCallback(boost::bind(&VISLocalizationInterface::callback, this, _1, _2, _3));
     sub_waypoint = nh.subscribe("/vloc/way_point", 10, &VISLocalizationInterface::WaypointCallback, this);
     
-    pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/state_estimation", 1);
-    pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/registered_scan", 1);
-    pub_path = nh.advertise<nav_msgs::Path>("/state_estimation_path", 1);
+    pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/vloc/state_estimation", 1);
+    pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/vloc/registered_scan", 1);
+    pub_path = nh.advertise<nav_msgs::Path>("/vloc/state_estimation_path", 1);
     pub_waypoint = nh.advertise<geometry_msgs::PointStamped>("/way_point", 1);
     tf_listener.reset(new tf::TransformListener);
     path_msg.poses.clear();
