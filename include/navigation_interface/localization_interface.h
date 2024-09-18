@@ -4,6 +4,7 @@
 #include <message_filters/time_synchronizer.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -275,6 +276,9 @@ class VISLocalizationInterface {
     tf_listener.reset(new tf::TransformListener);
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
+
+    float scanVoxelSize = 0.05;
+    down_size_filter.setLeafSize(scanVoxelSize, scanVoxelSize, scanVoxelSize);
     // clang-format on
   }
 
@@ -374,7 +378,6 @@ class VISLocalizationInterface {
                          const Eigen::Matrix4d &T_world_base) {
     pcl::PointCloud<PointType>::Ptr transformed_cloud(new pcl::PointCloud<PointType>());
     transformed_cloud->reserve(size_t(cloud->size() / point_skip));
-
     for (size_t i = 0; i < cloud->size(); i+=point_skip) {
       const auto &p = cloud->points[i];
       Eigen::Vector3d point(p.x, p.y, p.z);
@@ -396,7 +399,7 @@ class VISLocalizationInterface {
       p_world.z = static_cast<float>(point_world_base.z());
       p_world.intensity = 0.0;
       transformed_cloud->push_back(p_world);
-    }
+    } 
     sensor_msgs::PointCloud2 pc_msg;
     pcl::toROSMsg(*transformed_cloud, pc_msg);
     pc_msg.header.stamp = timestamp;
@@ -448,5 +451,7 @@ class VISLocalizationInterface {
   Eigen::Matrix4d T_base_sensor = Eigen::Matrix4d::Identity();
   size_t odom_cnt = 0;
   int point_skip = 1;
+
+  pcl::VoxelGrid<PointType> down_size_filter;
   // clang-format on
 };
