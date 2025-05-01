@@ -143,6 +143,7 @@ class CMULocalizationInterface {
     Eigen::Quaterniond quat(msg->pose.pose.orientation.w, msg->pose.pose.orientation.x,
                             msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
     T_world_sensor.block<3, 3>(0, 0) = quat.toRotationMatrix();
+    // DEBUG(gogojjh): check whether T_base_sensor is necessary
     Eigen::Matrix4d T_world_base = T_base_sensor * T_world_sensor * T_base_sensor.inverse();
 
     nav_msgs::Odometry transformed_odom;
@@ -188,7 +189,6 @@ class CMULocalizationInterface {
                          const Eigen::Matrix4d &T_world_base) {
     pcl::PointCloud<PointType>::Ptr transformed_cloud(new pcl::PointCloud<PointType>());
     transformed_cloud->reserve(size_t(cloud->size() / point_skip));
-
     for (size_t i = 0; i < cloud->size(); i+=point_skip) {
       const auto &p = cloud->points[i];
       Eigen::Vector3d point(p.x, p.y, p.z);
@@ -211,6 +211,7 @@ class CMULocalizationInterface {
       p_world.intensity = 0.0;
       transformed_cloud->push_back(p_world);
     }
+
     sensor_msgs::PointCloud2 pc_msg;
     pcl::toROSMsg(*transformed_cloud, pc_msg);
     pc_msg.header.stamp = timestamp;
@@ -256,19 +257,22 @@ class VISLocalizationInterface {
     sync(SyncPolicy(10), sub_odometry, sub_camera_info, sub_depth_img)
   {
     // clang-format off
+
     // Parameters
+    // The original world frame for the visual localization
     loc_world_frame_id = get_ros_param(nhp, "loc_world_frame_id", std::string("world"));
     loc_sensor_frame_id = get_ros_param(nhp, "loc_sensor_frame_id", std::string("camera"));
-    world_frame_id = get_ros_param(nhp, "world_frame_id", std::string("map"));  // the world frame of the base
+    // The converted world frame
+    world_frame_id = get_ros_param(nhp, "world_frame_id", std::string("map"));
     sensor_frame_id = get_ros_param(nhp, "sensor_frame_id", std::string("camera"));
     base_frame_id = get_ros_param(nhp, "base_frame_id", std::string("base"));
     near_point_filter_length = get_ros_param(nhp, "near_point_filter_length", 0.9);
     near_point_filter_width = get_ros_param(nhp, "near_point_filter_width", 0.6);
     point_skip = get_ros_param(nhp, "point_skip", 50);
-    // ROS
+    // ROS Subscriber
     sync.registerCallback(boost::bind(&VISLocalizationInterface::callback, this, _1, _2, _3));
     sub_waypoint = nh.subscribe("/vloc/way_point", 10, &VISLocalizationInterface::WaypointCallback, this);
-    
+    // ROS Publisher
     pub_state_estimation = nh.advertise<nav_msgs::Odometry>("/vloc/state_estimation", 1);
     pub_registered_scan = nh.advertise<sensor_msgs::PointCloud2>("/vloc/registered_scan", 1);
     pub_path = nh.advertise<nav_msgs::Path>("/vloc/state_estimation_path", 1);
@@ -277,7 +281,7 @@ class VISLocalizationInterface {
     path_msg.poses.clear();
     path_msg.poses.reserve(10000);
 
-    float scanVoxelSize = 0.05;
+    float scanVoxelSize = get_ros_param(nhp, "scan_voxel_size", 0.1);
     down_size_filter.setLeafSize(scanVoxelSize, scanVoxelSize, scanVoxelSize);
     // clang-format on
   }
@@ -325,15 +329,16 @@ class VISLocalizationInterface {
   // VISLocalizationInterface: world(_device) (e.g., meta glass, GT sensor) is the frame_id of the localization odometry (VLOC)
   Eigen::Matrix4d processOdometry(const nav_msgs::Odometry::ConstPtr &msg, 
                                   const Eigen::Matrix4d &T_base_sensor) {
-    Eigen::Matrix4d T_world_sensor = Eigen::Matrix4d::Identity();
     Eigen::Vector3d position(msg->pose.pose.position.x,
                              msg->pose.pose.position.y,
                              msg->pose.pose.position.z);
-    T_world_sensor.block<3, 1>(0, 3) = position;
     Eigen::Quaterniond quat(msg->pose.pose.orientation.w, msg->pose.pose.orientation.x,
                             msg->pose.pose.orientation.y, msg->pose.pose.orientation.z);
+    Eigen::Matrix4d T_world_sensor = Eigen::Matrix4d::Identity();
+    T_world_sensor.block<3, 1>(0, 3) = position;
     T_world_sensor.block<3, 3>(0, 0) = quat.toRotationMatrix();
-    Eigen::Matrix4d T_world_base = T_base_sensor * T_world_sensor * T_base_sensor.inverse();
+    // The pose of the base frame w.r.t. the localization world
+    Eigen::Matrix4d T_world_base = T_world_sensor * T_base_sensor.inverse();
 
     nav_msgs::Odometry transformed_odom;
     transformed_odom.header.stamp = msg->header.stamp;
@@ -400,6 +405,7 @@ class VISLocalizationInterface {
       p_world.intensity = 0.0;
       transformed_cloud->push_back(p_world);
     } 
+    
     sensor_msgs::PointCloud2 pc_msg;
     pcl::toROSMsg(*transformed_cloud, pc_msg);
     pc_msg.header.stamp = timestamp;
@@ -452,6 +458,7 @@ class VISLocalizationInterface {
   size_t odom_cnt = 0;
   int point_skip = 1;
 
+  float scan_voxel_size = 0.1;
   pcl::VoxelGrid<PointType> down_size_filter;
   // clang-format on
 };
